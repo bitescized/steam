@@ -12,7 +12,7 @@
             margin: 0;
             padding: 20px;
             font-family: 'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif;
-            background: linear-gradient(to bottom, #f0f7ff, #e6f1ff);
+            background: white;
             min-height: 100vh;
         }
         .container {
@@ -405,6 +405,20 @@
                                 if (newY < 0 || newX < 0 || newX > WIDTH) {
                                     if (Math.random() < escapeChance) {
                                         return { ...molecule, escaped: true };
+                                    } else {
+                                        // Bounce back when escape fails
+                                        if (newY < 0) {
+                                            newY = 10;
+                                            newVy = Math.abs(newVy); // Bounce down
+                                        }
+                                        if (newX < 0) {
+                                            newX = 10;
+                                            newVx = Math.abs(newVx); // Bounce right
+                                        }
+                                        if (newX > WIDTH) {
+                                            newX = WIDTH - 10;
+                                            newVx = -Math.abs(newVx); // Bounce left
+                                        }
                                     }
                                 }
 
