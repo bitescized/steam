@@ -1,754 +1,662 @@
-// Water Heating Simulation Component - Copy & Paste Ready
-// Usage: Just copy this entire code block into your React project
-
-const WaterSimulation = () => {
-  // Destructure React hooks from the global React object
-  const { useState, useEffect, useRef } = React;
-
-  // ====== SIMULATION CONSTANTS ======
-  const CANVAS_CONFIG = {
-    WIDTH: 600,
-    HEIGHT: 700,
-  };
-
-  const CUP_CONFIG = {
-    TOP: 300,
-    HEIGHT: 250,
-    WIDTH: 280,
-    get LEFT() { return (CANVAS_CONFIG.WIDTH - this.WIDTH) / 2; },
-    get RIGHT() { return this.LEFT + this.WIDTH; },
-  };
-
-  const WATER_CONFIG = {
-    INITIAL_LEVEL: CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT / 2,
-    MOLECULE_COUNT: 80,
-  };
-
-  const THERMOMETER_CONFIG = {
-    WIDTH: 25,
-    HEIGHT: 150,
-    get X() { return CANVAS_CONFIG.WIDTH / 2 - this.WIDTH - CUP_CONFIG.WIDTH / 2 - 60; },
-    get Y() { return CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT + 20 - this.HEIGHT; },
-    BULB_RADIUS_MULTIPLIER: 0.8,
-  };
-
-  const TEMPERATURE_CONFIG = {
-    MIN: 25,
-    MAX: 100,
-    INCREMENT: 0.3,
-    UPDATE_INTERVAL: 100,
-  };
-
-  // ====== COMPONENT STATE ======
-  const canvasRef = useRef(null);
-  const animationRef = useRef(null);
-  const lastTransitionTimeRef = useRef(0);
-
-  const [molecules, setMolecules] = useState([]);
-  const [temperature, setTemperature] = useState(TEMPERATURE_CONFIG.MIN);
-  const [isPaused, setIsPaused] = useState(false);
-  const [isHeating, setIsHeating] = useState(false);
-  const [escapedCount, setEscapedCount] = useState(0);
-  const [speedMode, setSpeedMode] = useState("normal");
-  const [waterLevel, setWaterLevel] = useState(WATER_CONFIG.INITIAL_LEVEL);
-
-  // ====== UTILITY FUNCTIONS ======
-
-  /**
-   * Creates the initial set of water molecules
-   */
-  const createInitialMolecules = () => {
-    const initialMolecules = [];
-    
-    for (let i = 0; i < WATER_CONFIG.MOLECULE_COUNT; i++) {
-      initialMolecules.push({
-        id: i,
-        x: CUP_CONFIG.LEFT + 20 + Math.random() * (CUP_CONFIG.WIDTH - 40),
-        y: WATER_CONFIG.INITIAL_LEVEL + 20 + Math.random() * (CUP_CONFIG.HEIGHT / 2 - 40),
-        vx: (Math.random() - 0.5) * 2.5,
-        vy: (Math.random() - 0.5) * 2.5,
-        inGasPhase: false,
-        escaped: false,
-      });
-    }
-    
-    return initialMolecules;
-  };
-
-  /**
-   * Calculates speed multiplier based on simulation mode
-   */
-  const getSpeedMultiplier = (mode) => {
-    const speedFactors = {
-      slow: 0.35,
-      normal: 1,
-      fast: 2.5,
-    };
-    return speedFactors[mode] || 1;
-  };
-
-  /**
-   * Draws the background gradient
-   */
-  const drawBackground = (ctx) => {
-    const bgGradient = ctx.createLinearGradient(0, 0, 0, CANVAS_CONFIG.HEIGHT);
-    bgGradient.addColorStop(0, "#e6f7ff");
-    bgGradient.addColorStop(1, "#f0f9ff");
-    ctx.fillStyle = bgGradient;
-    ctx.fillRect(0, 0, CANVAS_CONFIG.WIDTH, CANVAS_CONFIG.HEIGHT);
-  };
-
-  /**
-   * Draws the heating burner
-   */
-  const drawBurner = (ctx) => {
-    const burnerWidth = CUP_CONFIG.WIDTH + 40;
-    const burnerHeight = 30;
-    const burnerX = (CANVAS_CONFIG.WIDTH - burnerWidth) / 2;
-    const burnerY = CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT + 20;
-
-    // Burner base
-    ctx.fillStyle = "#555";
-    ctx.beginPath();
-    ctx.roundRect(burnerX, burnerY, burnerWidth, burnerHeight, 5);
-    ctx.fill();
-
-    // Draw flame effects if heating
-    if (isHeating) {
-      const flameColors = ["#ff9933", "#ff6600", "#ff3300", "#ff0000"];
-      
-      for (let i = 0; i < 8; i++) {
-        const flameX = burnerX + 20 + (i * (burnerWidth - 40)) / 7;
-        const flameHeight = 30 + Math.random() * 15 * (temperature / 100);
-        const flameWidth = burnerWidth / 14;
-
-        const flameGradient = ctx.createLinearGradient(
-          flameX, burnerY, flameX, burnerY - flameHeight
-        );
-
-        flameColors.forEach((color, index) => {
-          flameGradient.addColorStop(index / flameColors.length, color);
-        });
-        flameGradient.addColorStop(1, "rgba(255, 255, 100, 0.5)");
-
-        ctx.fillStyle = flameGradient;
-        ctx.beginPath();
-        ctx.moveTo(flameX - flameWidth / 2, burnerY);
-        ctx.quadraticCurveTo(
-          flameX,
-          burnerY - flameHeight * (0.7 + Math.random() * 0.3),
-          flameX + flameWidth / 2,
-          burnerY
-        );
-        ctx.fill();
-      }
-    }
-  };
-
-  /**
-   * Draws the water container/cup
-   */
-  const drawCup = (ctx) => {
-    // Cup outline
-    ctx.strokeStyle = "#9ac";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(CUP_CONFIG.LEFT, CUP_CONFIG.TOP);
-    ctx.lineTo(CUP_CONFIG.LEFT, CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT);
-    ctx.lineTo(CUP_CONFIG.RIGHT, CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT);
-    ctx.lineTo(CUP_CONFIG.RIGHT, CUP_CONFIG.TOP);
-    ctx.stroke();
-
-    // Glass highlight effect
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(CUP_CONFIG.LEFT + 3, CUP_CONFIG.TOP + 3);
-    ctx.lineTo(CUP_CONFIG.LEFT + 3, CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT - 3);
-    ctx.stroke();
-
-    // Water
-    const waterGradient = ctx.createLinearGradient(
-      CUP_CONFIG.LEFT, waterLevel, CUP_CONFIG.LEFT, CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT
-    );
-    waterGradient.addColorStop(0, "rgba(100, 180, 255, 0.3)");
-    waterGradient.addColorStop(1, "rgba(50, 150, 250, 0.4)");
-    ctx.fillStyle = waterGradient;
-    ctx.fillRect(
-      CUP_CONFIG.LEFT + 1,
-      waterLevel,
-      CUP_CONFIG.WIDTH - 2,
-      CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT - waterLevel - 1
-    );
-  };
-
-  /**
-   * Draws the thermometer with current temperature
-   */
-  const drawThermometer = (ctx) => {
-    const thermBulbRadius = THERMOMETER_CONFIG.WIDTH * THERMOMETER_CONFIG.BULB_RADIUS_MULTIPLIER;
-
-    // Thermometer tube
-    const thermGradient = ctx.createLinearGradient(
-      THERMOMETER_CONFIG.X, THERMOMETER_CONFIG.Y,
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH, THERMOMETER_CONFIG.Y
-    );
-    thermGradient.addColorStop(0, "#f0f0f0");
-    thermGradient.addColorStop(0.5, "#ffffff");
-    thermGradient.addColorStop(1, "#e0e0e0");
-
-    ctx.fillStyle = thermGradient;
-    ctx.strokeStyle = "#aaa";
-    ctx.lineWidth = 1;
-
-    ctx.beginPath();
-    ctx.moveTo(THERMOMETER_CONFIG.X, THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.WIDTH / 2);
-    ctx.arc(
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.WIDTH / 2,
-      Math.PI, 0
-    );
-    ctx.lineTo(THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH, THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT);
-    ctx.arc(
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT,
-      THERMOMETER_CONFIG.WIDTH / 2,
-      0, Math.PI
-    );
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Thermometer bulb
-    const bulbGradient = ctx.createRadialGradient(
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2 - 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT - 2,
-      1,
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT,
-      thermBulbRadius
-    );
-    bulbGradient.addColorStop(0, "#fff");
-    bulbGradient.addColorStop(1, "#ddd");
-
-    ctx.fillStyle = bulbGradient;
-    ctx.beginPath();
-    ctx.arc(
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT,
-      thermBulbRadius,
-      0, Math.PI * 2
-    );
-    ctx.fill();
-    ctx.stroke();
-
-    // Temperature liquid
-    const tempGradient = ctx.createLinearGradient(
-      THERMOMETER_CONFIG.X, THERMOMETER_CONFIG.Y,
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH, THERMOMETER_CONFIG.Y
-    );
-    tempGradient.addColorStop(0, "#ff3333");
-    tempGradient.addColorStop(0.5, "#ff6666");
-    tempGradient.addColorStop(1, "#ff3333");
-
-    const tempHeight = (temperature / TEMPERATURE_CONFIG.MAX) * THERMOMETER_CONFIG.HEIGHT;
-    ctx.fillStyle = tempGradient;
-
-    const mercuryTop = THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT - tempHeight;
-    const mercuryRadius = Math.min(THERMOMETER_CONFIG.WIDTH / 2, tempHeight / 2);
-
-    ctx.beginPath();
-    if (tempHeight > THERMOMETER_CONFIG.WIDTH) {
-      ctx.moveTo(THERMOMETER_CONFIG.X, mercuryTop + mercuryRadius);
-      ctx.arc(
-        THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-        mercuryTop + mercuryRadius,
-        mercuryRadius,
-        Math.PI, 0
-      );
-      ctx.lineTo(THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH, THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT);
-      ctx.arc(
-        THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-        THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT,
-        THERMOMETER_CONFIG.WIDTH / 2,
-        0, Math.PI
-      );
-      ctx.closePath();
-    } else {
-      ctx.arc(
-        THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-        THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT,
-        thermBulbRadius,
-        0, Math.PI * 2
-      );
-    }
-    ctx.fill();
-
-    // Temperature markings
-    ctx.fillStyle = "#555";
-    ctx.textAlign = "right";
-    ctx.font = "12px 'Segoe UI', Tahoma, sans-serif";
-
-    for (let i = 0; i <= TEMPERATURE_CONFIG.MAX; i += 20) {
-      const markY = THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT - (i / TEMPERATURE_CONFIG.MAX) * THERMOMETER_CONFIG.HEIGHT;
-      ctx.fillRect(THERMOMETER_CONFIG.X - 6, markY, 6, 1);
-      ctx.fillText(`${i}°C`, THERMOMETER_CONFIG.X - 8, markY + 4);
-
-      if (i < TEMPERATURE_CONFIG.MAX) {
-        const smallMarkY = THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT - ((i + 10) / TEMPERATURE_CONFIG.MAX) * THERMOMETER_CONFIG.HEIGHT;
-        ctx.fillRect(THERMOMETER_CONFIG.X - 3, smallMarkY, 3, 1);
-      }
-    }
-
-    // Temperature display
-    ctx.textAlign = "center";
-    ctx.font = "bold 16px 'Segoe UI', Tahoma, sans-serif";
-
-    const tempText = `${Math.round(temperature)}°C`;
-    const tempTextWidth = ctx.measureText(tempText).width;
-    
-    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-    ctx.fillRect(
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2 - tempTextWidth / 2 - 3,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT + thermBulbRadius * 2 + 5,
-      tempTextWidth + 6,
-      20
-    );
-
-    ctx.fillStyle = "#333";
-    ctx.fillText(
-      tempText,
-      THERMOMETER_CONFIG.X + THERMOMETER_CONFIG.WIDTH / 2,
-      THERMOMETER_CONFIG.Y + THERMOMETER_CONFIG.HEIGHT + thermBulbRadius * 2 + 20
-    );
-  };
-
-  /**
-   * Draws a single molecule
-   */
-  const drawMolecule = (ctx, molecule) => {
-    if (molecule.escaped) return;
-
-    const gradient = ctx.createRadialGradient(
-      molecule.x - 1, molecule.y - 1, 1,
-      molecule.x, molecule.y, 7
-    );
-
-    if (molecule.inGasPhase) {
-      gradient.addColorStop(0, "rgba(150, 220, 255, 0.9)");
-      gradient.addColorStop(1, "rgba(100, 180, 250, 0.6)");
-    } else {
-      gradient.addColorStop(0, "rgba(100, 200, 255, 0.9)");
-      gradient.addColorStop(1, "rgba(60, 150, 250, 0.8)");
-    }
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(molecule.x, molecule.y, 7, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Highlight effect
-    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-    ctx.beginPath();
-    ctx.arc(molecule.x - 2, molecule.y - 2, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  };
-
-  // ====== EVENT HANDLERS ======
-
-  const toggleSimulation = () => {
-    setIsHeating(true);
-    setIsPaused(false);
-  };
-
-  const resetSimulation = () => {
-    setIsPaused(true);
-    setTemperature(TEMPERATURE_CONFIG.MIN);
-    setEscapedCount(0);
-    setSpeedMode("normal");
-    setWaterLevel(WATER_CONFIG.INITIAL_LEVEL);
-    setIsHeating(false);
-    lastTransitionTimeRef.current = 0;
-    setMolecules(createInitialMolecules());
-    setIsPaused(false);
-  };
-
-  const setSpeed = (mode) => {
-    setSpeedMode(mode);
-  };
-
-  // ====== EFFECTS ======
-
-  useEffect(() => {
-    setMolecules(createInitialMolecules());
-    setEscapedCount(0);
-    setWaterLevel(WATER_CONFIG.INITIAL_LEVEL);
-  }, []);
-
-  useEffect(() => {
-    if (isPaused || !isHeating) return;
-
-    const tempInterval = setInterval(() => {
-      setTemperature((prev) => {
-        const increment = prev < 50 ? TEMPERATURE_CONFIG.INCREMENT : TEMPERATURE_CONFIG.INCREMENT;
-        return Math.min(prev + increment, TEMPERATURE_CONFIG.MAX);
-      });
-    }, TEMPERATURE_CONFIG.UPDATE_INTERVAL);
-
-    return () => clearInterval(tempInterval);
-  }, [isPaused, isHeating]);
-
-  useEffect(() => {
-    if (!canvasRef.current || isPaused) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    const transitionToGasPhase = (timestamp) => {
-      if (!isHeating) return;
-
-      const timeSinceLastTransition = (timestamp - lastTransitionTimeRef.current) / 1000;
-
-      let transitionInterval = Infinity;
-      let moleculesToTransition = 0;
-
-      if (temperature >= 100) {
-        transitionInterval = 0.5;
-        moleculesToTransition = 2;
-      } else if (temperature >= 90) {
-        transitionInterval = 1;
-        moleculesToTransition = 1;
-      } else if (temperature >= 80) {
-        transitionInterval = 2;
-        moleculesToTransition = 1;
-      }
-
-      if (timeSinceLastTransition >= transitionInterval) {
-        const liquidMolecules = molecules.filter((m) => !m.inGasPhase);
-        const toTransition = Math.min(moleculesToTransition, liquidMolecules.length);
-
-        if (toTransition > 0) {
-          const updatedMolecules = [...molecules];
-
-          for (let i = 0; i < toTransition; i++) {
-            const liquidMoleculeIndices = updatedMolecules
-              .map((m, idx) => (!m.inGasPhase ? idx : -1))
-              .filter((idx) => idx !== -1);
-
-            if (liquidMoleculeIndices.length > 0) {
-              const randomIndex = liquidMoleculeIndices[
-                Math.floor(Math.random() * liquidMoleculeIndices.length)
-              ];
-
-              updatedMolecules[randomIndex] = {
-                ...updatedMolecules[randomIndex],
-                inGasPhase: true,
-                y: waterLevel - 15,
-                vx: (Math.random() - 0.5) * 3,
-                vy: -2 - Math.random() * 2,
-                escaped: false,
-              };
-            }
-          }
-
-          setMolecules(updatedMolecules);
-          lastTransitionTimeRef.current = timestamp;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Water Heating Simulation</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif;
+            background: linear-gradient(to bottom, #f0f7ff, #e6f1ff);
+            min-height: 100vh;
         }
-      }
-    };
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-    const animate = (timestamp) => {
-      ctx.clearRect(0, 0, CANVAS_CONFIG.WIDTH, CANVAS_CONFIG.HEIGHT);
+    <script type="text/babel">
+        function WaterSimulation() {
+            const { useState, useEffect, useRef } = React;
 
-      drawBackground(ctx);
-      drawBurner(ctx);
-      drawCup(ctx);
-      drawThermometer(ctx);
+            // ====== SIMULATION CONSTANTS ======
+            const WIDTH = 600;
+            const HEIGHT = 700;
+            const CUP_TOP = 300;
+            const CUP_HEIGHT = 250;
+            const CUP_WIDTH = 280;
+            const WATER_LEVEL = CUP_TOP + CUP_HEIGHT / 2;
 
-      transitionToGasPhase(timestamp);
+            // ====== COMPONENT STATE ======
+            const canvasRef = useRef(null);
+            const animationRef = useRef(null);
+            const lastTransitionTimeRef = useRef(0);
 
-      const totalMolecules = molecules.length;
-      const escapedMolecules = molecules.filter((m) => m.escaped || m.inGasPhase).length;
-      const evaporationRatio = escapedMolecules / totalMolecules;
-      const maxWaterDecrease = CUP_CONFIG.HEIGHT / 2;
-      const newWaterLevel = WATER_CONFIG.INITIAL_LEVEL + evaporationRatio * maxWaterDecrease;
+            const [molecules, setMolecules] = useState([]);
+            const [temperature, setTemperature] = useState(25);
+            const [isPaused, setIsPaused] = useState(false);
+            const [isHeating, setIsHeating] = useState(false);
+            const [escapedCount, setEscapedCount] = useState(0);
+            const [speedMode, setSpeedMode] = useState("normal");
+            const [waterLevel, setWaterLevel] = useState(WATER_LEVEL);
 
-      if (Math.abs(newWaterLevel - waterLevel) > 0.5) {
-        setWaterLevel(newWaterLevel);
-      }
+            // ====== UTILITY FUNCTIONS ======
+            const getSpeedMultiplier = (mode) => {
+                const speedFactors = { slow: 0.35, normal: 1, fast: 2.5 };
+                return speedFactors[mode] || 1;
+            };
 
-      setMolecules((prev) => {
-        return prev.map((molecule) => {
-          if (molecule.escaped) return molecule;
+            const createInitialMolecules = () => {
+                const initialMolecules = [];
+                const cupLeft = (WIDTH - CUP_WIDTH) / 2;
+                
+                for (let i = 0; i < 80; i++) {
+                    initialMolecules.push({
+                        id: i,
+                        x: cupLeft + 20 + Math.random() * (CUP_WIDTH - 40),
+                        y: WATER_LEVEL + 20 + Math.random() * (CUP_HEIGHT / 2 - 40),
+                        vx: (Math.random() - 0.5) * 2.5,
+                        vy: (Math.random() - 0.5) * 2.5,
+                        inGasPhase: false,
+                        escaped: false,
+                    });
+                }
+                return initialMolecules;
+            };
 
-          const phaseSpeedMultiplier = molecule.inGasPhase ? 1.7 : 1;
-          const tempSpeedMultiplier = isHeating ? 1.3 + (Math.floor(temperature / 10) * 10) / 20 : 1;
-          const speedFactor = getSpeedMultiplier(speedMode);
-          const totalSpeedMultiplier = phaseSpeedMultiplier * tempSpeedMultiplier * speedFactor;
+            // ====== EVENT HANDLERS ======
+            const toggleSimulation = () => {
+                setIsHeating(true);
+                setIsPaused(false);
+            };
 
-          let newX = molecule.x + molecule.vx * totalSpeedMultiplier;
-          let newY = molecule.y + molecule.vy * totalSpeedMultiplier;
-          let newVx = molecule.vx;
-          let newVy = molecule.vy;
+            const resetSimulation = () => {
+                setIsPaused(true);
+                setTemperature(25);
+                setEscapedCount(0);
+                setSpeedMode("normal");
+                setWaterLevel(WATER_LEVEL);
+                setIsHeating(false);
+                lastTransitionTimeRef.current = 0;
+                setMolecules(createInitialMolecules());
+                setIsPaused(false);
+            };
 
-          if (newX < CUP_CONFIG.LEFT + 10) {
-            newX = CUP_CONFIG.LEFT + 10;
-            newVx = -molecule.vx;
-          } else if (newX > CUP_CONFIG.RIGHT - 10) {
-            newX = CUP_CONFIG.RIGHT - 10;
-            newVx = -molecule.vx;
-          }
+            const setSpeed = (mode) => {
+                setSpeedMode(mode);
+            };
 
-          if (molecule.inGasPhase && !molecule.escaped) {
-            const escapeChance = 0.8 + temperature / 500;
+            // ====== EFFECTS ======
+            useEffect(() => {
+                setMolecules(createInitialMolecules());
+                setEscapedCount(0);
+                setWaterLevel(WATER_LEVEL);
+            }, []);
 
-            if (newY < 0 || newX < 0 || newX > CANVAS_CONFIG.WIDTH) {
-              if (Math.random() < escapeChance) {
-                return { ...molecule, escaped: true };
-              }
-            }
+            useEffect(() => {
+                if (isPaused || !isHeating) return;
 
-            if (newY > waterLevel - 10) {
-              newY = waterLevel - 10;
-              newVy = -molecule.vy;
-            }
-          } else if (!molecule.inGasPhase) {
-            if (newY < waterLevel + 10) {
-              newY = waterLevel + 10;
-              newVy = -molecule.vy;
-            } else if (newY > CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT - 10) {
-              newY = CUP_CONFIG.TOP + CUP_CONFIG.HEIGHT - 10;
-              newVy = -molecule.vy;
-            }
-          }
+                const tempInterval = setInterval(() => {
+                    setTemperature((prev) => {
+                        const increment = prev < 50 ? 0.3 : 0.3;
+                        return Math.min(prev + increment, 100);
+                    });
+                }, 100);
 
-          newVx += (Math.random() - 0.5) * 0.2;
-          newVy += (Math.random() - 0.5) * 0.2;
-          newVx *= 0.98;
-          newVy *= 0.98;
+                return () => clearInterval(tempInterval);
+            }, [isPaused, isHeating]);
 
-          return {
-            ...molecule,
-            x: newX,
-            y: newY,
-            vx: newVx,
-            vy: newVy,
-          };
-        });
-      });
+            useEffect(() => {
+                if (!canvasRef.current || isPaused) return;
 
-      molecules.forEach((molecule) => drawMolecule(ctx, molecule));
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext("2d");
+                const cupLeft = (WIDTH - CUP_WIDTH) / 2;
+                const cupRight = cupLeft + CUP_WIDTH;
 
-      const currentEscapedCount = molecules.filter((m) => m.escaped).length;
-      if (currentEscapedCount !== escapedCount) {
-        setEscapedCount(currentEscapedCount);
-      }
+                const transitionToGasPhase = (timestamp) => {
+                    if (!isHeating) return;
 
-      animationRef.current = requestAnimationFrame(animate);
-    };
+                    const timeSinceLastTransition = (timestamp - lastTransitionTimeRef.current) / 1000;
 
-    animationRef.current = requestAnimationFrame(animate);
+                    let transitionInterval = Infinity;
+                    let moleculesToTransition = 0;
 
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [molecules, temperature, isPaused, speedMode, waterLevel, isHeating, escapedCount]);
+                    if (temperature >= 100) {
+                        transitionInterval = 0.5;
+                        moleculesToTransition = 2;
+                    } else if (temperature >= 90) {
+                        transitionInterval = 1;
+                        moleculesToTransition = 1;
+                    } else if (temperature >= 80) {
+                        transitionInterval = 2;
+                        moleculesToTransition = 1;
+                    }
 
-  // ====== COMPONENT RENDER ======
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "24px",
-        background: "linear-gradient(to bottom, #e6f1ff, #f0f7ff)",
-        borderRadius: "12px",
-        boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-        fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
-      }}
-    >
-      {/* Title */}
-      <div
-        style={{
-          marginBottom: "16px",
-          fontSize: "28px",
-          fontWeight: "bold",
-          color: "#000000",
-          letterSpacing: "1px",
-          fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
-        }}
-      >
-        Heating a Liquid
-      </div>
+                    if (timeSinceLastTransition >= transitionInterval) {
+                        const liquidMolecules = molecules.filter((m) => !m.inGasPhase);
+                        const toTransition = Math.min(moleculesToTransition, liquidMolecules.length);
 
-      {/* Canvas */}
-      <div style={{ position: 'relative', marginBottom: '24px' }}>
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_CONFIG.WIDTH}
-          height={CANVAS_CONFIG.HEIGHT}
-          style={{
-            border: '2px solid #bfdbfe',
-            borderRadius: '8px',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            backgroundColor: '#f9fafb'
-          }}
-        />
-      </div>
+                        if (toTransition > 0) {
+                            const updatedMolecules = [...molecules];
 
-      {/* Controls */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          marginBottom: "24px",
-        }}
-      >
-        {/* Main controls */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            justifyContent: "center",
-            gap: "12px",
-            width: "100%",
-            maxWidth: "500px",
-            marginBottom: "16px",
-          }}
-        >
-          <button
-            onClick={toggleSimulation}
-            disabled={isHeating}
-            style={{
-              padding: "12px 20px",
-              fontSize: "18px",
-              fontWeight: "bold",
-              borderRadius: "9999px",
-              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-              background: isHeating
-                ? "linear-gradient(to right, #d1d5db, #9ca3af)"
-                : "linear-gradient(to right, #f97316, #ef4444)",
-              color: "white",
-              border: "none",
-              minWidth: "120px",
-              cursor: isHeating ? "default" : "pointer",
-              opacity: isHeating ? 0.5 : 1,
-              transition: "all 0.2s",
-            }}
-          >
-            🔥 Start Heating
-          </button>
+                            for (let i = 0; i < toTransition; i++) {
+                                const liquidMoleculeIndices = updatedMolecules
+                                    .map((m, idx) => (!m.inGasPhase ? idx : -1))
+                                    .filter((idx) => idx !== -1);
 
-          <button
-            onClick={() => setIsPaused(true)}
-            disabled={isPaused}
-            style={{
-              padding: "12px 20px",
-              fontSize: "18px",
-              fontWeight: "bold",
-              borderRadius: "9999px",
-              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-              background: "linear-gradient(to right, #60a5fa, #3b82f6)",
-              color: "white",
-              border: "none",
-              minWidth: "120px",
-              cursor: isPaused ? "default" : "pointer",
-              opacity: isPaused ? 0.5 : 1,
-              transition: "all 0.2s",
-            }}
-          >
-            ⏸️ Pause
-          </button>
+                                if (liquidMoleculeIndices.length > 0) {
+                                    const randomIndex = liquidMoleculeIndices[
+                                        Math.floor(Math.random() * liquidMoleculeIndices.length)
+                                    ];
 
-          <button
-            onClick={resetSimulation}
-            style={{
-              padding: "12px 20px",
-              fontSize: "18px",
-              fontWeight: "bold",
-              borderRadius: "9999px",
-              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-              background: "linear-gradient(to right, #9ca3af, #4b5563)",
-              color: "white",
-              border: "none",
-              minWidth: "120px",
-              cursor: "pointer",
-              transition: "all 0.2s",
-            }}
-          >
-            🔄 Reset
-          </button>
-        </div>
+                                    updatedMolecules[randomIndex] = {
+                                        ...updatedMolecules[randomIndex],
+                                        inGasPhase: true,
+                                        y: waterLevel - 15,
+                                        vx: (Math.random() - 0.5) * 3,
+                                        vy: -2 - Math.random() * 2,
+                                        escaped: false,
+                                    };
+                                }
+                            }
 
-        {/* Speed controls */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "20px",
-              fontWeight: "bold",
-              marginBottom: "12px",
-              color: "#4b5563",
-              textAlign: "center",
-              fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
-            }}
-          >
-            Simulation Speed
-          </div>
-          <div style={{ display: "flex", gap: "12px" }}>
-            {["slow", "normal", "fast"].map((mode) => {
-              const isActive = speedMode === mode;
-              const colors = {
-                slow: { active: "#9333ea", inactive: "#f3e8ff", text: "#7e22ce" },
-                normal: { active: "#16a34a", inactive: "#dcfce7", text: "#15803d" },
-                fast: { active: "#4f46e5", inactive: "#e0e7ff", text: "#4338ca" },
-              };
-              const icons = { slow: "🐢", normal: "⏱️", fast: "🚀" };
+                            setMolecules(updatedMolecules);
+                            lastTransitionTimeRef.current = timestamp;
+                        }
+                    }
+                };
 
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setSpeed(mode)}
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: "16px",
-                    fontWeight: 600,
-                    borderRadius: "9999px",
-                    boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
-                    backgroundColor: isActive ? colors[mode].active : colors[mode].inactive,
-                    color: isActive ? "white" : colors[mode].text,
-                    border: "none",
-                    minWidth: "100px",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                    textTransform: "capitalize",
-                  }}
-                >
-                  {icons[mode]} {mode}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+                const animate = (timestamp) => {
+                    ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
-// For use in existing React apps with imports, change the first line to:
-// const { useState, useEffect, useRef } = React;
-// to:
-// import React, { useState, useEffect, useRef } from 'react';
+                    // Draw background
+                    const bgGradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+                    bgGradient.addColorStop(0, "#e6f7ff");
+                    bgGradient.addColorStop(1, "#f0f9ff");
+                    ctx.fillStyle = bgGradient;
+                    ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-// Export for ES6 modules (uncomment if needed):
-// export default WaterSimulation;
+                    // Draw burner
+                    const burnerWidth = CUP_WIDTH + 40;
+                    const burnerHeight = 30;
+                    const burnerX = (WIDTH - burnerWidth) / 2;
+                    const burnerY = CUP_TOP + CUP_HEIGHT + 20;
+
+                    ctx.fillStyle = "#555";
+                    ctx.beginPath();
+                    ctx.roundRect(burnerX, burnerY, burnerWidth, burnerHeight, 5);
+                    ctx.fill();
+
+                    // Draw flames if heating
+                    if (isHeating) {
+                        const flameColors = ["#ff9933", "#ff6600", "#ff3300", "#ff0000"];
+                        
+                        for (let i = 0; i < 8; i++) {
+                            const flameX = burnerX + 20 + (i * (burnerWidth - 40)) / 7;
+                            const flameHeight = 30 + Math.random() * 15 * (temperature / 100);
+                            const flameWidth = burnerWidth / 14;
+
+                            const flameGradient = ctx.createLinearGradient(
+                                flameX, burnerY, flameX, burnerY - flameHeight
+                            );
+
+                            flameColors.forEach((color, index) => {
+                                flameGradient.addColorStop(index / flameColors.length, color);
+                            });
+                            flameGradient.addColorStop(1, "rgba(255, 255, 100, 0.5)");
+
+                            ctx.fillStyle = flameGradient;
+                            ctx.beginPath();
+                            ctx.moveTo(flameX - flameWidth / 2, burnerY);
+                            ctx.quadraticCurveTo(
+                                flameX,
+                                burnerY - flameHeight * (0.7 + Math.random() * 0.3),
+                                flameX + flameWidth / 2,
+                                burnerY
+                            );
+                            ctx.fill();
+                        }
+                    }
+
+                    // Draw cup
+                    ctx.strokeStyle = "#9ac";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(cupLeft, CUP_TOP);
+                    ctx.lineTo(cupLeft, CUP_TOP + CUP_HEIGHT);
+                    ctx.lineTo(cupRight, CUP_TOP + CUP_HEIGHT);
+                    ctx.lineTo(cupRight, CUP_TOP);
+                    ctx.stroke();
+
+                    // Glass highlight
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(cupLeft + 3, CUP_TOP + 3);
+                    ctx.lineTo(cupLeft + 3, CUP_TOP + CUP_HEIGHT - 3);
+                    ctx.stroke();
+
+                    // Draw water
+                    const waterGradient = ctx.createLinearGradient(
+                        cupLeft, waterLevel, cupLeft, CUP_TOP + CUP_HEIGHT
+                    );
+                    waterGradient.addColorStop(0, "rgba(100, 180, 255, 0.3)");
+                    waterGradient.addColorStop(1, "rgba(50, 150, 250, 0.4)");
+                    ctx.fillStyle = waterGradient;
+                    ctx.fillRect(
+                        cupLeft + 1,
+                        waterLevel,
+                        CUP_WIDTH - 2,
+                        CUP_TOP + CUP_HEIGHT - waterLevel - 1
+                    );
+
+                    // Draw thermometer
+                    const thermWidth = 25;
+                    const thermHeight = 150;
+                    const thermX = WIDTH / 2 - thermWidth - CUP_WIDTH / 2 - 60;
+                    const thermY = burnerY - thermHeight;
+                    const thermBulbRadius = thermWidth * 0.8;
+
+                    // Thermometer tube
+                    const thermGradient = ctx.createLinearGradient(
+                        thermX, thermY, thermX + thermWidth, thermY
+                    );
+                    thermGradient.addColorStop(0, "#f0f0f0");
+                    thermGradient.addColorStop(0.5, "#ffffff");
+                    thermGradient.addColorStop(1, "#e0e0e0");
+
+                    ctx.fillStyle = thermGradient;
+                    ctx.strokeStyle = "#aaa";
+                    ctx.lineWidth = 1;
+
+                    ctx.beginPath();
+                    ctx.moveTo(thermX, thermY + thermWidth / 2);
+                    ctx.arc(thermX + thermWidth / 2, thermY + thermWidth / 2, thermWidth / 2, Math.PI, 0);
+                    ctx.lineTo(thermX + thermWidth, thermY + thermHeight);
+                    ctx.arc(thermX + thermWidth / 2, thermY + thermHeight, thermWidth / 2, 0, Math.PI);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Thermometer bulb
+                    const bulbGradient = ctx.createRadialGradient(
+                        thermX + thermWidth / 2 - 2, thermY + thermHeight - 2, 1,
+                        thermX + thermWidth / 2, thermY + thermHeight, thermBulbRadius
+                    );
+                    bulbGradient.addColorStop(0, "#fff");
+                    bulbGradient.addColorStop(1, "#ddd");
+
+                    ctx.fillStyle = bulbGradient;
+                    ctx.beginPath();
+                    ctx.arc(thermX + thermWidth / 2, thermY + thermHeight, thermBulbRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Temperature liquid
+                    const tempGradient = ctx.createLinearGradient(
+                        thermX, thermY, thermX + thermWidth, thermY
+                    );
+                    tempGradient.addColorStop(0, "#ff3333");
+                    tempGradient.addColorStop(0.5, "#ff6666");
+                    tempGradient.addColorStop(1, "#ff3333");
+
+                    const tempHeight = (temperature / 100) * thermHeight;
+                    ctx.fillStyle = tempGradient;
+
+                    const mercuryTop = thermY + thermHeight - tempHeight;
+                    const mercuryRadius = Math.min(thermWidth / 2, tempHeight / 2);
+
+                    ctx.beginPath();
+                    if (tempHeight > thermWidth) {
+                        ctx.moveTo(thermX, mercuryTop + mercuryRadius);
+                        ctx.arc(thermX + thermWidth / 2, mercuryTop + mercuryRadius, mercuryRadius, Math.PI, 0);
+                        ctx.lineTo(thermX + thermWidth, thermY + thermHeight);
+                        ctx.arc(thermX + thermWidth / 2, thermY + thermHeight, thermWidth / 2, 0, Math.PI);
+                        ctx.closePath();
+                    } else {
+                        ctx.arc(thermX + thermWidth / 2, thermY + thermHeight, thermBulbRadius, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+
+                    // Temperature markings
+                    ctx.fillStyle = "#555";
+                    ctx.textAlign = "right";
+                    ctx.font = "12px 'Segoe UI', Tahoma, sans-serif";
+
+                    for (let i = 0; i <= 100; i += 20) {
+                        const markY = thermY + thermHeight - (i / 100) * thermHeight;
+                        ctx.fillRect(thermX - 6, markY, 6, 1);
+                        ctx.fillText(`${i}°C`, thermX - 8, markY + 4);
+
+                        if (i < 100) {
+                            const smallMarkY = thermY + thermHeight - ((i + 10) / 100) * thermHeight;
+                            ctx.fillRect(thermX - 3, smallMarkY, 3, 1);
+                        }
+                    }
+
+                    // Temperature display
+                    ctx.textAlign = "center";
+                    ctx.font = "bold 16px 'Segoe UI', Tahoma, sans-serif";
+
+                    const tempText = `${Math.round(temperature)}°C`;
+                    const tempTextWidth = ctx.measureText(tempText).width;
+                    
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+                    ctx.fillRect(
+                        thermX + thermWidth / 2 - tempTextWidth / 2 - 3,
+                        thermY + thermHeight + thermBulbRadius * 2 + 5,
+                        tempTextWidth + 6,
+                        20
+                    );
+
+                    ctx.fillStyle = "#333";
+                    ctx.fillText(tempText, thermX + thermWidth / 2, thermY + thermHeight + thermBulbRadius * 2 + 20);
+
+                    // Handle phase transitions
+                    transitionToGasPhase(timestamp);
+
+                    // Update water level
+                    const totalMolecules = molecules.length;
+                    const escapedMolecules = molecules.filter((m) => m.escaped || m.inGasPhase).length;
+                    const evaporationRatio = escapedMolecules / totalMolecules;
+                    const maxWaterDecrease = CUP_HEIGHT / 2;
+                    const newWaterLevel = WATER_LEVEL + evaporationRatio * maxWaterDecrease;
+
+                    if (Math.abs(newWaterLevel - waterLevel) > 0.5) {
+                        setWaterLevel(newWaterLevel);
+                    }
+
+                    // Update molecules
+                    setMolecules((prev) => {
+                        return prev.map((molecule) => {
+                            if (molecule.escaped) return molecule;
+
+                            const phaseSpeedMultiplier = molecule.inGasPhase ? 1.7 : 1;
+                            const tempSpeedMultiplier = isHeating ? 1.3 + (Math.floor(temperature / 10) * 10) / 20 : 1;
+                            const speedFactor = getSpeedMultiplier(speedMode);
+                            const totalSpeedMultiplier = phaseSpeedMultiplier * tempSpeedMultiplier * speedFactor;
+
+                            let newX = molecule.x + molecule.vx * totalSpeedMultiplier;
+                            let newY = molecule.y + molecule.vy * totalSpeedMultiplier;
+                            let newVx = molecule.vx;
+                            let newVy = molecule.vy;
+
+                            if (newX < cupLeft + 10) {
+                                newX = cupLeft + 10;
+                                newVx = -molecule.vx;
+                            } else if (newX > cupRight - 10) {
+                                newX = cupRight - 10;
+                                newVx = -molecule.vx;
+                            }
+
+                            if (molecule.inGasPhase && !molecule.escaped) {
+                                const escapeChance = 0.8 + temperature / 500;
+
+                                if (newY < 0 || newX < 0 || newX > WIDTH) {
+                                    if (Math.random() < escapeChance) {
+                                        return { ...molecule, escaped: true };
+                                    }
+                                }
+
+                                if (newY > waterLevel - 10) {
+                                    newY = waterLevel - 10;
+                                    newVy = -molecule.vy;
+                                }
+                            } else if (!molecule.inGasPhase) {
+                                if (newY < waterLevel + 10) {
+                                    newY = waterLevel + 10;
+                                    newVy = -molecule.vy;
+                                } else if (newY > CUP_TOP + CUP_HEIGHT - 10) {
+                                    newY = CUP_TOP + CUP_HEIGHT - 10;
+                                    newVy = -molecule.vy;
+                                }
+                            }
+
+                            newVx += (Math.random() - 0.5) * 0.2;
+                            newVy += (Math.random() - 0.5) * 0.2;
+                            newVx *= 0.98;
+                            newVy *= 0.98;
+
+                            return {
+                                ...molecule,
+                                x: newX,
+                                y: newY,
+                                vx: newVx,
+                                vy: newVy,
+                            };
+                        });
+                    });
+
+                    // Draw molecules
+                    molecules.forEach((molecule) => {
+                        if (molecule.escaped) return;
+
+                        const gradient = ctx.createRadialGradient(
+                            molecule.x - 1, molecule.y - 1, 1, molecule.x, molecule.y, 7
+                        );
+
+                        if (molecule.inGasPhase) {
+                            gradient.addColorStop(0, "rgba(150, 220, 255, 0.9)");
+                            gradient.addColorStop(1, "rgba(100, 180, 250, 0.6)");
+                        } else {
+                            gradient.addColorStop(0, "rgba(100, 200, 255, 0.9)");
+                            gradient.addColorStop(1, "rgba(60, 150, 250, 0.8)");
+                        }
+
+                        ctx.fillStyle = gradient;
+                        ctx.beginPath();
+                        ctx.arc(molecule.x, molecule.y, 7, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+                        ctx.beginPath();
+                        ctx.arc(molecule.x - 2, molecule.y - 2, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    // Update escaped count
+                    const currentEscapedCount = molecules.filter((m) => m.escaped).length;
+                    if (currentEscapedCount !== escapedCount) {
+                        setEscapedCount(currentEscapedCount);
+                    }
+
+                    animationRef.current = requestAnimationFrame(animate);
+                };
+
+                animationRef.current = requestAnimationFrame(animate);
+
+                return () => {
+                    if (animationRef.current) {
+                        cancelAnimationFrame(animationRef.current);
+                    }
+                };
+            }, [molecules, temperature, isPaused, speedMode, waterLevel, isHeating, escapedCount]);
+
+            return (
+                <div style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    padding: "24px",
+                    background: "linear-gradient(to bottom, #e6f1ff, #f0f7ff)",
+                    borderRadius: "12px",
+                    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+                    fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
+                }}>
+                    <div style={{
+                        marginBottom: "16px",
+                        fontSize: "28px",
+                        fontWeight: "bold",
+                        color: "#000000",
+                        letterSpacing: "1px",
+                        fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
+                    }}>
+                        Heating a Liquid
+                    </div>
+
+                    <div style={{ position: 'relative', marginBottom: '24px' }}>
+                        <canvas
+                            ref={canvasRef}
+                            width={WIDTH}
+                            height={HEIGHT}
+                            style={{
+                                border: '2px solid #bfdbfe',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                backgroundColor: '#f9fafb'
+                            }}
+                        />
+                    </div>
+
+                    <div style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        marginBottom: "24px",
+                    }}>
+                        <div style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            justifyContent: "center",
+                            gap: "12px",
+                            width: "100%",
+                            maxWidth: "500px",
+                            marginBottom: "16px",
+                        }}>
+                            <button
+                                onClick={toggleSimulation}
+                                disabled={isHeating}
+                                style={{
+                                    padding: "12px 20px",
+                                    fontSize: "18px",
+                                    fontWeight: "bold",
+                                    borderRadius: "9999px",
+                                    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+                                    background: isHeating
+                                        ? "linear-gradient(to right, #d1d5db, #9ca3af)"
+                                        : "linear-gradient(to right, #f97316, #ef4444)",
+                                    color: "white",
+                                    border: "none",
+                                    minWidth: "120px",
+                                    cursor: isHeating ? "default" : "pointer",
+                                    opacity: isHeating ? 0.5 : 1,
+                                    transition: "all 0.2s",
+                                }}
+                            >
+                                🔥 Start Heating
+                            </button>
+
+                            <button
+                                onClick={() => setIsPaused(true)}
+                                disabled={isPaused}
+                                style={{
+                                    padding: "12px 20px",
+                                    fontSize: "18px",
+                                    fontWeight: "bold",
+                                    borderRadius: "9999px",
+                                    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+                                    background: "linear-gradient(to right, #60a5fa, #3b82f6)",
+                                    color: "white",
+                                    border: "none",
+                                    minWidth: "120px",
+                                    cursor: isPaused ? "default" : "pointer",
+                                    opacity: isPaused ? 0.5 : 1,
+                                    transition: "all 0.2s",
+                                }}
+                            >
+                                ⏸️ Pause
+                            </button>
+
+                            <button
+                                onClick={resetSimulation}
+                                style={{
+                                    padding: "12px 20px",
+                                    fontSize: "18px",
+                                    fontWeight: "bold",
+                                    borderRadius: "9999px",
+                                    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+                                    background: "linear-gradient(to right, #9ca3af, #4b5563)",
+                                    color: "white",
+                                    border: "none",
+                                    minWidth: "120px",
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                }}
+                            >
+                                🔄 Reset
+                            </button>
+                        </div>
+
+                        <div style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                        }}>
+                            <div style={{
+                                fontSize: "20px",
+                                fontWeight: "bold",
+                                marginBottom: "12px",
+                                color: "#4b5563",
+                                textAlign: "center",
+                                fontFamily: "'Trebuchet MS', 'Segoe UI', Tahoma, sans-serif",
+                            }}>
+                                Simulation Speed
+                            </div>
+                            <div style={{ display: "flex", gap: "12px" }}>
+                                {["slow", "normal", "fast"].map((mode) => {
+                                    const isActive = speedMode === mode;
+                                    const colors = {
+                                        slow: { active: "#9333ea", inactive: "#f3e8ff", text: "#7e22ce" },
+                                        normal: { active: "#16a34a", inactive: "#dcfce7", text: "#15803d" },
+                                        fast: { active: "#4f46e5", inactive: "#e0e7ff", text: "#4338ca" },
+                                    };
+                                    const icons = { slow: "🐢", normal: "⏱️", fast: "🚀" };
+
+                                    return (
+                                        <button
+                                            key={mode}
+                                            onClick={() => setSpeed(mode)}
+                                            style={{
+                                                padding: "8px 16px",
+                                                fontSize: "16px",
+                                                fontWeight: 600,
+                                                borderRadius: "9999px",
+                                                boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+                                                backgroundColor: isActive ? colors[mode].active : colors[mode].inactive,
+                                                color: isActive ? "white" : colors[mode].text,
+                                                border: "none",
+                                                minWidth: "100px",
+                                                cursor: "pointer",
+                                                transition: "all 0.2s",
+                                                textTransform: "capitalize",
+                                            }}
+                                        >
+                                            {icons[mode]} {mode}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the application
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement('div', { className: 'container' }, 
+            React.createElement(WaterSimulation)
+        ));
+    </script>
+</body>
+</html>
